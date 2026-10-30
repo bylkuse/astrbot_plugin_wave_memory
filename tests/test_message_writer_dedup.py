@@ -137,6 +137,32 @@ class MessageWriterDedupTest(unittest.TestCase):
             dedup_policy=MemoryDedupPolicy(window_seconds=window_seconds),
         )
 
+    def test_media_placeholders_skip_queue_and_database_but_keep_caption(self):
+        db = FakeDB()
+        writer = self._writer(db)
+        async def run():
+            await writer.enqueue({"scope": _group_scope(), "content": "[图片]"})
+            self.assertTrue(writer._queue.empty())
+            await writer._process_batch([
+                {"scope": _group_scope(), "content": "[At:123] [图片]", "source": "core"},
+                {"scope": _group_scope(), "content": "时雨: [图片] 时雨: [图片]"},
+                {"scope": _group_scope(), "content": "我的新键盘是红色的 [图片]", "sender_id": "u1"},
+            ])
+        asyncio.run(run())
+        self.assertEqual([row["content"] for row in db.added], ["我的新键盘是红色的"])
+        self.assertEqual(writer.stats["placeholder_skipped"], 3)
+
+    def test_generated_error_is_not_stored_but_user_discussion_is(self):
+        db = FakeDB()
+        writer = self._writer(db)
+        asyncio.run(writer._process_batch([
+            {"scope": _group_scope(), "sender_id": "bot", "content": "LLM 响应错误: RateLimitError"},
+            {"scope": _group_scope(), "sender_id": "u1", "content": "我在研究 RateLimitError 的处理方式"},
+        ]))
+        self.assertEqual(len(db.added), 1)
+        self.assertEqual(db.added[0]["sender_id"], "u1")
+        self.assertEqual(writer.stats["system_error_skipped"], 1)
+
     def test_auto_agent_and_compat_writes_share_content_dedup_in_same_batch(self):
         db = FakeDB()
         writer = self._writer(db)

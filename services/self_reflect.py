@@ -8,7 +8,7 @@ import re
 import sqlite3
 import time
 from collections import defaultdict, deque
-from typing import Optional
+from typing import Any, Optional
 
 try:  # 兼容插件包导入和仓库测试直接导入
     from ..domain.bot_profile import bot_catalog_scope
@@ -70,7 +70,7 @@ class SelfReflectService:
         *,
         bot_id: str | None = None,
         repositories=None,
-        candidate_service: LearningCandidateService | None = None,
+        candidate_service: Any | None = None,
         catalog_scope: CatalogScope | None = None,
         profile_lookup=None,
     ):

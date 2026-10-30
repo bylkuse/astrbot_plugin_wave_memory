@@ -513,13 +513,18 @@ class IngressMixin:
     async def _handle_decorating_result(self, event: AstrMessageEvent):
         """在发送消息前提取 <<impression:...>> 标记并更新画像，彻底从消息链中剥离标记。"""
         result = event.get_result()
-        if not result or not result.chain:
+        from ..services.reply_sanitizer import record_impressions, sanitize_chain, sanitize_stream
+
+        stream = getattr(result, "async_stream", None) if result is not None else None
+        if stream is not None and not getattr(event, "_wave_memory_stream_sanitized", False):
+            result.set_async_stream(sanitize_stream(stream, self, event))
+            event._wave_memory_stream_sanitized = True
+        if result is None or not result.chain:
             settle = getattr(self, "_settle_concern_claim", None)
             if callable(settle):
                 settle(event, spoke=False)
             return
 
-        import re as _re
         from astrbot.core.message.components import Plain
 
         # 决定「这次不回复」：模型显式调用 wave_memory_hold_peace、或回一句 [沉默]，都丢掉整条回复
@@ -546,63 +551,7 @@ class IngressMixin:
             )
             return
 
-        _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
-        extracted_impression = None
-        extracted_impact = 1.0
-
-        # 遍历 Plain 组件，提取并移除标记
-        for comp in result.chain:
-            if isinstance(comp, Plain) and comp.text:
-                matches = list(_re.finditer(_IMPRESSION_RE, comp.text, flags=_re.DOTALL))
-                if matches:
-                    for m in matches:
-                        imp_val = (m.group(1) or m.group(2) or "").strip()
-                        body, impact = parse_impression_mark(imp_val)
-                        if body:
-                            extracted_impression = body
-                            extracted_impact = impact
-                    # 清除文本中所有 impression 标记（包括前置换行和多余空白）
-                    cleaned_text = _re.sub(r'\s*' + _IMPRESSION_RE + r'\s*', '', comp.text, flags=_re.DOTALL)
-                    comp.text = cleaned_text
-
-        # 日常标记只攒未结算能量，不覆盖正式印象指针、不钉时间线。
-        if extracted_impression:
-            try:
-                runtime_scope = getattr(event, "_wave_memory_runtime_scope", None)
-                if not isinstance(runtime_scope, RuntimeScope):
-                    resolver = getattr(self, "scope_resolver", None)
-                    if resolver is not None:
-                        resolved_context = resolver.resolve_event(event)
-                        runtime_scope = getattr(resolved_context, "scope", None)
-
-                if isinstance(runtime_scope, RuntimeScope) and runtime_scope.visibility == "group" and runtime_scope.session:
-                    group_id = runtime_scope.session.conversation_id
-                    principal = runtime_scope.subject_principal_id or ""
-                    principal_prefix = f"{runtime_scope.session.platform_id}:user:"
-                    sender_id = principal[len(principal_prefix):] if principal.startswith(principal_prefix) else ""
-                    bot_db_id = runtime_scope.bot_id
-
-                    if sender_id and group_id and sender_id != "bot":
-                        persist_unsettled_trace(
-                            self.db,
-                            bot_id=bot_db_id,
-                            user_id=sender_id,
-                            group_id=group_id,
-                            text=extracted_impression,
-                            impact=extracted_impact,
-                        )
-                        exists = self.db.conn.execute(
-                            "SELECT 1 FROM user_profiles WHERE user_id=? AND group_id=? AND bot_id=?",
-                            (sender_id, group_id, bot_db_id),
-                        ).fetchone()
-                        if exists is None:
-                            self.db.conn.execute(
-                                "INSERT INTO user_profiles (user_id, group_id, bot_id, metadata, interaction_count, last_seen) VALUES (?, ?, ?, ?, 1, ?)",
-                                (sender_id, group_id, bot_db_id, "{}", time.time()),
-                            )
-                            self.db.conn.commit()
-            except Exception as _e:
-                logger.debug(f"[WaveMemory] impression update in on_decorating_result failed: {_e}")
+        await record_impressions(self, event, sanitize_chain(result.chain))
 
         visible = any(
             (isinstance(comp, Plain) and (comp.text or "").strip()) or not isinstance(comp, Plain)
@@ -710,6 +659,13 @@ class IngressMixin:
         ``timestamp``：Runtime API 批量补写时带上说话的时刻，与同会话的弹幕按先后交错；
         AstrBot 钩子不传，用入库时刻。
         """
+        from ..services.reply_sanitizer import record_impressions, strip_impression_marks
+        from types import SimpleNamespace
+
+        bot_text, marks = strip_impression_marks(bot_text)
+        await record_impressions(self, SimpleNamespace(_wave_memory_runtime_scope=runtime_scope), marks)
+        if not bot_text.strip():
+            return
         group_id = runtime_scope.session.conversation_id
         if runtime_scope.visibility == "group":
             remember_group_name = getattr(self, "_remember_group_name", None)
@@ -756,26 +712,6 @@ class IngressMixin:
             "timestamp": spoken_at if 0 < spoken_at < float("inf") else time.time(),
             "event_id": bot_reply_event_id(message_id, bot_text),
         })
-
-        # 兜底：decorating 未跑时，日常观感只进未结算表，不写 metadata.impression。
-        import re as _re
-        _IMPRESSION_RE = r'(?:<<\s*impression\s*[:：](.+?)>>|\[\s*impression\s*[:：](.+?)\])'
-        _impression_matches = list(_re.finditer(_IMPRESSION_RE, bot_text, _re.DOTALL))
-        if _impression_matches and sender_id and group_id and sender_id != "bot":
-            for _match in _impression_matches:
-                _body, _impact = parse_impression_mark((_match.group(1) or _match.group(2) or "").strip())
-                if _body:
-                    try:
-                        persist_unsettled_trace(
-                            self.db,
-                            bot_id=bot_db_id,
-                            user_id=sender_id,
-                            group_id=group_id,
-                            text=_body,
-                            impact=_impact,
-                        )
-                    except Exception as _e:
-                        logger.debug(f"[WaveMemory] impression update fallback failed: {_e}")
 
         # 自省 read-model 仅支持群聊，private 不记录派生回复状态。
         if runtime_scope.visibility == "group" and self.self_reflect:

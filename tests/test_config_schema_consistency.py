@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
+
+from engine.db.retention_repo import RetentionPolicy
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "_conf_schema.json"
@@ -27,6 +30,7 @@ LEGACY_ONLY_KEYS: set[tuple[str, str]] = set()
 
 # 纯说明项，不是配置。
 DOC_ONLY_KEYS = {"_system_status"}
+DATACLASS_SETTINGS = {"Eviction_Settings": RetentionPolicy}
 
 
 def _schema_object_sections() -> dict[str, dict]:
@@ -56,6 +60,10 @@ def test_every_schema_key_is_read_by_code_or_declared_legacy():
             if item_key in DOC_ONLY_KEYS:
                 continue
             if (section, item_key) in LEGACY_ONLY_KEYS:
+                continue
+            if section in DATACLASS_SETTINGS and item_key in {
+                field.name for field in fields(DATACLASS_SETTINGS[section])
+            }:
                 continue
             if f'"{item_key}"' not in source and f"'{item_key}'" not in source:
                 orphans.append(f"{section}.{item_key}")

@@ -6,15 +6,21 @@ import asyncio
 import socket
 import sys
 import threading
-from typing import Optional
 
 try:
     from astrbot.api import logger
 except Exception:  # pragma: no cover - 本地单测未安装 AstrBot SDK 时的轻量兜底
+
     class _Logger:
-        def info(self, *args, **kwargs): pass
-        def warning(self, *args, **kwargs): pass
-        def debug(self, *args, **kwargs): pass
+        def info(self, *args, **kwargs):
+            pass
+
+        def warning(self, *args, **kwargs):
+            pass
+
+        def debug(self, *args, **kwargs):
+            pass
+
     logger = _Logger()
 
 
@@ -46,9 +52,10 @@ class Server:
         self.host = host
         self.port = port
         self.password = password or ""
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._shutdown_event: Optional[asyncio.Event] = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._shutdown_event: asyncio.Event | None = None
+        self._sockets: list[socket.socket] = []
         self.app = None
 
     # ─── 公开接口 ───
@@ -56,7 +63,9 @@ class Server:
     async def start(self) -> None:
         """启动 Hypercorn 守护线程。"""
         if self.host not in {"127.0.0.1", "localhost", "::1"} and not self.password:
-            logger.warning("[WaveMemory WebUI] 注意：正在以 0.0.0.0 免密模式启动 WebUI（适用于 Docker 内部端口映射/开发环境）。若部署于公网，请务必在配置中设置访问密码。")
+            logger.warning(
+                "[WaveMemory WebUI] 注意：正在以 0.0.0.0 免密模式启动 WebUI（适用于 Docker 内部端口映射/开发环境）。若部署于公网，请务必在配置中设置访问密码。"
+            )
         if self._thread and self._thread.is_alive():
             logger.info("[WaveMemory WebUI] 服务器已在运行中")
             return
@@ -69,7 +78,9 @@ class Server:
                 if not self._is_port_listening():
                     break
             else:
-                logger.warning(f"[WaveMemory WebUI] 端口 {self.port} 仍被占用，跳过 WebUI 启动")
+                logger.warning(
+                    f"[WaveMemory WebUI] 端口 {self.port} 仍被占用，跳过 WebUI 启动"
+                )
                 return
 
         from .app import create_app
@@ -121,6 +132,10 @@ class Server:
                 )
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
+            if self._thread.is_alive():
+                raise RuntimeError(
+                    "WebUI thread did not stop; retaining its owner for retry"
+                )
             self._thread = None
 
         self._loop = None
@@ -150,14 +165,30 @@ class Server:
             config.errorlog = None
             config.loglevel = "WARNING"
 
-            loop.run_until_complete(
-                hypercorn.asyncio.serve(
-                    self.app,
-                    config,
-                    shutdown_trigger=self._shutdown_event.wait,
+            # Hypercorn marks its sockets inheritable. An AstrBot exec restart
+            # otherwise leaves a listening socket with no serving thread.
+            sockets = config.create_sockets()
+            self._sockets = [
+                *sockets.secure_sockets,
+                *sockets.insecure_sockets,
+                *sockets.quic_sockets,
+            ]
+            for sock in self._sockets:
+                sock.set_inheritable(False)
+            config.create_sockets = lambda: sockets
+            try:
+                loop.run_until_complete(
+                    hypercorn.asyncio.serve(
+                        self.app,
+                        config,
+                        shutdown_trigger=self._shutdown_event.wait,
+                    )
                 )
-            )
-            loop.close()
+            finally:
+                for sock in self._sockets:
+                    sock.close()
+                self._sockets = []
+                loop.close()
         except Exception as e:
             logger.error(f"[WaveMemory WebUI] 服务器线程异常: {e}")
 

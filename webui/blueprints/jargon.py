@@ -1596,7 +1596,7 @@ async def get_holyman():
         "repo": manifest_payload.get("repo") or manifest_payload.get("source") or "",
     }
     quality_summary = {
-        "status": quality_payload.get("status") or asset_status,
+        "status": quality_payload.get("status") or content_status["asset_status"],
         "declared_corpus_count": quality_payload.get("declared_corpus_count"),
         "parsed_corpus_count": quality_payload.get("parsed_corpus_count"),
         "error_count": error_count,

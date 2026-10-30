@@ -270,6 +270,8 @@ def test_replies_match_profile_id_or_bot_id_and_list_hit_channels(seeded):
 def test_missing_tables_only_degrade_their_section(tmp_path):
     db = WaveMemoryDB(str(tmp_path / "bare.sqlite"), dimension=3)
     try:
+        db.conn.execute("DROP TABLE experience_episodes")
+        db.conn.commit()
         payload = build_bot_home_payload(db.conn, bot_id="yushu", now=NOW, soul_repository=db.soul_repository)
     finally:
         db.close()

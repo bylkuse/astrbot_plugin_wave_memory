@@ -1,4 +1,3 @@
-from plugin_source import helper_nodes, plugin_class_node, plugin_method, plugin_source_text
 import ast
 import asyncio
 import copy
@@ -7,20 +6,16 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from plugin_source import plugin_class_node
+from reply_components import Image as _FakeImage
+from reply_components import Plain as _FakePlain
+from reply_components import component_modules
+
 from domain.scope import RuntimeScope, SessionRef
 from engine.db.connection import ConnectionManager
 from engine.db.person_timeline_repo import PersonTimelineRepo
 from services.impression_timeline import parse_impression_mark, persist_unsettled_trace
-
-
-class _FakePlain:
-    def __init__(self, text: str):
-        self.text = text
-
-
-class _FakeImage:
-    def __init__(self, *args, **kwargs):
-        pass
+from services.reply_sanitizer import record_impressions, sanitize_chain, sanitize_stream
 
 
 class _FakeResult:
@@ -77,6 +72,8 @@ def _load_method(method_name: str):
         def visit_ImportFrom(self, node):
             if node.module == "astrbot.core.message.components":
                 return None
+            if node.module == "services.reply_sanitizer":
+                return None
             return node
 
     method = _DropComponentImport().visit(method)
@@ -91,6 +88,9 @@ def _load_method(method_name: str):
         "time": SimpleNamespace(time=lambda: 1700000000.0),
         "persist_unsettled_trace": persist_unsettled_trace,
         "parse_impression_mark": parse_impression_mark,
+        "record_impressions": record_impressions,
+        "sanitize_chain": sanitize_chain,
+        "sanitize_stream": sanitize_stream,
     }
     exec(compile(module, str(source_path), "exec"), namespace)
     return namespace[method_name]
@@ -98,6 +98,9 @@ def _load_method(method_name: str):
 
 class ImpressionHookTest(unittest.TestCase):
     def setUp(self):
+        components = component_modules()
+        components.__enter__()
+        self.addCleanup(components.__exit__, None, None, None)
         self.manager = ConnectionManager(":memory:")
         self.timeline = PersonTimelineRepo(self.manager)
         self.conn = self.manager.conn
@@ -113,11 +116,17 @@ class ImpressionHookTest(unittest.TestCase):
             )
         """)
         self.conn.commit()
+
+        async def _transaction(callback):
+            with self.manager.write_transaction() as connection:
+                return callback(connection)
+
         async def _fake_enqueue(x):
             pass
 
         self.plugin = SimpleNamespace(
             db=SimpleNamespace(conn=self.conn, person_timeline=self.timeline),
+            write_gateway=SimpleNamespace(coordinator=SimpleNamespace(transaction=_transaction)),
             ignore_bot_messages=False,
             _bot_registry={},
             _get_bot_name=lambda bot_id: "test_bot",
@@ -212,35 +221,14 @@ class ImpressionHookTest(unittest.TestCase):
         state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u5", group_id="g1")
         self.assertEqual(state["traces"][0]["text"], "最新深入讨论的新印象")
 
-    def test_impression_persistence_uses_package_relative_import(self):
-        # v6：钩子实现在 app/ingress.py（比插件根目录深一层，相对导入是两个点）。
-        source_path = Path(__file__).resolve().parents[1] / "app" / "ingress.py"
-        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-        plugin_class = plugin_class_node()
-        method = next(
-            node for node in plugin_class.body
-            if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_decorating_result"
-        )
-        module_imports = [
-            node for node in tree.body
-            if isinstance(node, ast.ImportFrom)
-            and any(alias.name in {"persist_unsettled_trace", "parse_impression_mark"} for alias in node.names)
-        ]
-        self.assertEqual(len(module_imports), 1)
-        self.assertEqual(module_imports[0].module, "services.impression_timeline")
-        self.assertEqual(module_imports[0].level, 2)
-        imported = {alias.name for alias in module_imports[0].names}
-        self.assertIn("persist_unsettled_trace", imported)
-        self.assertIn("parse_impression_mark", imported)
-        method_imports = [
-            node for node in ast.walk(method)
-            if isinstance(node, ast.ImportFrom)
-            and any(alias.name == "append_impression" for alias in node.names)
-        ]
-        self.assertEqual(method_imports, [])
-        source = source_path.read_text(encoding="utf-8")
-        self.assertNotIn("append_impression(_meta", source)
-        self.assertIn("persist_unsettled_trace(", source)
+    def test_response_and_decorating_do_not_double_count_impression(self):
+        event = _FakeEvent(sender_id="u6", group_id="g1", bot_id="b1")
+        async def run():
+            await record_impressions(self.plugin, event, ["最新深入讨论的新印象"])
+            await record_impressions(self.plugin, event, ["最新深入讨论的新印象"])
+        asyncio.run(run())
+        state = self.timeline.get_unsettled_state(bot_id="b1", user_id="u6", group_id="g1")
+        self.assertEqual(state["interaction_count"], 1)
 
 
 if __name__ == "__main__":

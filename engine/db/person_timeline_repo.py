@@ -460,12 +460,6 @@ class PersonTimelineRepo:
         )
         if connection is not None:
             connection.execute(sql, payload)
-            commit = getattr(connection, "commit", None)
-            if callable(commit):
-                try:
-                    commit()
-                except Exception:
-                    pass
             return
         self.cm.execute_write(sql, payload)
         self.cm.commit()

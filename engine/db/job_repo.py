@@ -111,6 +111,8 @@ class JobRepository:
                    ON background_job_runs(status, lease_until, updated_at)""",
             """CREATE INDEX IF NOT EXISTS idx_background_job_runs_request
                    ON background_job_runs(request_id, created_at)""",
+            """CREATE INDEX IF NOT EXISTS idx_background_job_runs_retention
+                   ON background_job_runs(status, updated_at)""",
         )
         for statement in statements:
             connection.execute(statement)
@@ -395,7 +397,7 @@ class JobRepository:
                   FROM background_job_runs r
                   JOIN job_requests q ON q.request_id=r.request_id
                  WHERE {' AND '.join(where)}
-                 ORDER BY r.created_at, r.run_id""",
+                 ORDER BY r.created_at, r.run_id LIMIT 1""",
             tuple(params),
         ).fetchall()
         for row in rows:
@@ -676,7 +678,7 @@ class JobRepository:
         """Release an owned live lease so graceful shutdown can replay immediately."""
         run = cls.get_run(connection, run_id)
         if run is None:
-            raise JobNotFoundError(run_id)
+            raise JobStateError(f"unknown job run: {run_id}")
         if run.lease_owner != str(lease_owner) or run.status not in {
             cls.RUNNING,
             cls.CANCEL_REQUESTED,

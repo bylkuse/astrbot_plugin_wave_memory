@@ -24,6 +24,8 @@ from .db.scoped_tag_projection import effective_tag_rows
 from .semantic_gain import bell_gain, SemanticGainConfig
 
 if TYPE_CHECKING:  # 子进程构建只导入本模块，不拖进整个数据库层
+    import numpy as np
+
     from .database import WaveMemoryDB
 
 

@@ -28,6 +28,7 @@ from .db.migrations.tag_status_repair import repair_done_without_tags
 from .db.migrations.memory_version_backfill import backfill_null_memory_versions
 from .db.migrations.display_name_repair import repair_dirty_display_names
 from .db.migrations.memories_v2 import ensure_memories_v2_schema
+from .db.migrations.experience_episodes import ensure_experience_episode_schema
 from .db.migrations.scoped_derived_knowledge import ensure_scoped_derived_knowledge_schema
 from .db.migrations.scoped_learning_projections import ensure_scoped_learning_projection_schema
 from .db.migrations.reply_feedback_learning import ensure_reply_feedback_learning_schema
@@ -110,6 +111,7 @@ class WaveMemoryDB:
             ensure_scoped_fact_review_schema(self._cm)
             ensure_bot_jargon_schema(self._cm)
             ensure_person_timeline_schema(self._cm)
+            ensure_experience_episode_schema(self._cm)
             ensure_scoped_learning_projection_schema(self._cm)
             ensure_reply_feedback_learning_schema(self._cm)
             # v5.1.3：表达候选改内容级去重（来源表 + 计数列 + 回填），旧库加列不重建

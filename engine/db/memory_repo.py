@@ -715,6 +715,7 @@ class MemoryRepo:
         *,
         scope: RuntimeScope,
         expected_revisions: Mapping[int, int],
+        allow_quarantine: bool = False,
     ) -> tuple[dict[str, int], ...]:
         """Delete a scoped batch atomically after validating every expected revision.
 
@@ -734,7 +735,7 @@ class MemoryRepo:
         ids = tuple(targets)
         placeholders = ",".join("?" for _ in ids)
         assert scope.session is not None
-        quarantine_filter = " AND COALESCE(quarantine, 0)=0" if _has_table_column(connection, "memories", "quarantine") else ""
+        quarantine_filter = " AND COALESCE(quarantine, 0)=0" if not allow_quarantine and _has_table_column(connection, "memories", "quarantine") else ""
         rows = connection.execute(
             f"SELECT id, version FROM memories WHERE id IN ({placeholders}) "
             "AND bot_id=? AND session_id=? AND visibility=? AND group_id=? "
@@ -755,14 +756,19 @@ class MemoryRepo:
             str(row[0])
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-        if "scoped_memory_tags" in table_names:
-            connection.execute(
-                f"DELETE FROM scoped_memory_tags WHERE memory_id IN ({placeholders})", ids
-            )
-        if "memory_tags" in table_names:
-            connection.execute(
-                f"DELETE FROM memory_tags WHERE memory_id IN ({placeholders})", ids
-            )
+        for table in (
+            "scoped_memory_tags", "memory_tags", "memory_mentions", "tag_extraction_status",
+            "scoped_memory_effective_tags", "scoped_memory_tag_corrections", "memory_feedback",
+            "shared_memory_grants", "tag_status_repair_v51",
+            "memory_importance_repair_v51", "display_name_repair_v51",
+        ):
+            if table in table_names:
+                columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+                key = "memory_id" if "memory_id" in columns else "id"
+                if key in columns:
+                    connection.execute(f"DELETE FROM {table} WHERE {key} IN ({placeholders})", ids)
+        if "fts_memories_cjk" in table_names:
+            connection.execute(f"DELETE FROM fts_memories_cjk WHERE rowid IN ({placeholders})", ids)
         cursor = connection.execute(
             f"DELETE FROM memories WHERE id IN ({placeholders})", ids
         )

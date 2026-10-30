@@ -80,7 +80,7 @@ def test_removed_dead_features_are_gone():
     schema = json.loads(pathlib.Path("_conf_schema.json").read_text(encoding="utf-8-sig"))
     lifecycle = schema["Lifecycle_Settings"].get("items", schema["Lifecycle_Settings"])
     assert not any(key.startswith(("enable_dream", "dream_")) for key in lifecycle)
-    assert set(schema["Eviction_Settings"]["items"]) == {"interval_hours"}
+    assert "interval_hours" in schema["Eviction_Settings"]["items"]
     assert not {"max_memories", "canonical_capacity_enabled", "cold_chat_when_over_capacity"} & set(schema["Storage_Settings"]["items"])
     src = pathlib.Path("app/injection.py").read_text(encoding="utf-8")
     for dead in ("_build_shadow_persona_realtime_ctx", "_hourly_reply_count", "_run_injection_shadow_trace", "realtime_ctx",

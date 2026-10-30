@@ -1096,7 +1096,7 @@ class BootstrapMixin:
                         description="消息入库队列（核心服务，不能停）", stoppable=False),
             ServiceSpec("tag_worker", "标签提取", lambda: getattr(self, "tag_worker", None), owner="tag-worker",
                         description="后台匀速给新记忆打标签"),
-            ServiceSpec("eviction", "流水账清理", lambda: getattr(self, "eviction_service", None), owner="eviction",
+            ServiceSpec("eviction", "记忆与历史清理", lambda: getattr(self, "eviction_service", None), owner="eviction",
                         description="定时清理 7 天前的写入流水账（记忆本身不删除）",
                         factory=self._create_eviction_service, config_keys=("Eviction_Settings.",)),
             ServiceSpec("lifecycle", "好感生命周期", lambda: getattr(self, "lifecycle", None), owner="lifecycle",

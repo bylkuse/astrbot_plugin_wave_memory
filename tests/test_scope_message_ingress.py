@@ -310,6 +310,8 @@ def _load_on_bot_sent():
         def visit_ImportFrom(self, node):
             if node.module == "astrbot.core.message.components":
                 return None
+            if node.module == "services.reply_sanitizer":
+                node.level = 0
             return node
 
     methods = [_DropComponentImport().visit(method) for method in methods]

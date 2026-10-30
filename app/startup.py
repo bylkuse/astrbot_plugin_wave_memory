@@ -700,6 +700,7 @@ class StartupMixin:
             memory_index=self.memory_index,
             eviction_interval_hours=float(eviction_cfg.get("interval_hours", 6.0)),
             write_gateway=self.write_gateway,
+            retention_settings=eviction_cfg,
         )
         return self.eviction_service
 

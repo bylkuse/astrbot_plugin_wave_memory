@@ -18,7 +18,7 @@ from ..engine.database import WaveMemoryDB
 from ..engine.vector_index import VectorIndex
 from ..engine.embedding import EmbeddingService
 from .identity_safety import is_identity_contamination
-from .injection.query_gate import is_placeholder_only
+from .injection.query_gate import is_placeholder_only, memory_text_without_media
 try:
     from ..domain.display_name import sanitize_display_name
     from ..domain.quality import QualityDecision, QualityProposal
@@ -396,7 +396,11 @@ class MessageWriter:
         """Validate scope-bearing payloads before placing them in the write queue."""
         if not self._accepting:
             raise RuntimeError("message_writer_ingress_closed")
-        await self._queue.put(self._normalize_scope_payload(message_data))
+        item = self._normalize_scope_payload(message_data)
+        if item.get("source") not in {"explicit", "teach"} and is_placeholder_only(item.get("content", "")):
+            self._stats["placeholder_skipped"] = self._stats.get("placeholder_skipped", 0) + 1
+            return
+        await self._queue.put(item)
 
     async def shutdown(self) -> None:
         """Fence ingress, settle accepted queue items, then stop the worker task."""
@@ -497,7 +501,19 @@ class MessageWriter:
 
     async def _process_batch(self, batch: list[dict]):
         """处理一批消息：分类 + embedding + 存储。"""
-        batch = [self._normalize_scope_payload(item) for item in batch]
+        prepared = []
+        for item in batch:
+            item = self._normalize_scope_payload(item)
+            if item.get("source") not in {"explicit", "teach"}:
+                item["content"] = memory_text_without_media(item.get("content", ""))
+                if not item["content"].strip():
+                    self._stats["placeholder_skipped"] = self._stats.get("placeholder_skipped", 0) + 1
+                    continue
+                if item.get("sender_id") == "bot" and is_system_error_message(item["content"]):
+                    self._stats["system_error_skipped"] = self._stats.get("system_error_skipped", 0) + 1
+                    continue
+            prepared.append(item)
+        batch = prepared
         # 分类
         for item in batch:
             if "source" not in item:
@@ -569,9 +585,7 @@ class MessageWriter:
         else:
             vectors = []
 
-        # 写入有向量的消息。记忆总量不设上限（记忆只增不删）：算好的向量一律保留。
-        # 曾有「活跃记忆超过 max_memories（10 万）就把 chat 存成无向量」的软上限，线上 38 万条
-        # 早已超额，于是两次重启之间的新聊天都搜不到、重启时再补算一遍，已删除。
+        # Persist useful text with its vector; retention trims old rows separately.
         for item, vec in zip(need_embed, vectors):
             try:
                 memory_id = await self._persist_memory(

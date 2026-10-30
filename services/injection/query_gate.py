@@ -52,6 +52,11 @@ _PLACEHOLDER = re.compile(
     r"引用消息|转发消息)\]"
     r"|\[CQ:[^\]]*\]"
 )
+_MEDIA_PLACEHOLDER = re.compile(
+    r"\[(?:图片|动画表情|表情(?:[:：]\s*\d+)?|语音|视频|文件|转发消息)\]"
+    r"|\[CQ:(?:image|face|mface|record|video|file|forward)(?:,[^\]]*)?\]",
+    re.IGNORECASE,
+)
 # 合并记忆里每行可能带「名字: 」前缀（含 sender/名字(QQ) 两种写法）。
 _SPEAKER_PREFIX = re.compile(r"(?m)^[^\n:：\[\]]{1,40}[:：]\s*")
 # 去抖合并会把多条写在同一行：「伊芙: [图片] 伊芙: [图片]」。紧挨占位符的
@@ -75,6 +80,20 @@ def is_placeholder_only(text: Any) -> bool:
     if not raw.strip() or not _PLACEHOLDER.search(raw):
         return False
     return not normalize_query(strip_placeholders(raw))
+
+
+def memory_text_without_media(text: Any) -> str:
+    """Remove empty media markers while preserving real text and speaker labels.
+
+    Args:
+        text: Captured message text, including optional platform media markers.
+
+    Returns:
+        Meaningful text, or an empty string for a placeholder-only message.
+    """
+    if is_placeholder_only(text):
+        return ""
+    return _MEDIA_PLACEHOLDER.sub(" ", str(text or "")).strip()
 
 
 def _as_int(value: Any, default: int) -> int:

@@ -96,8 +96,8 @@ from .app.maintenance import MaintenanceMixin
     "astrbot_plugin_wave_memory",
     "vivy1024",
     "群聊长期记忆插件。日常检索只依赖向量模型，本地 SQLite 毫秒级召回，不装 Neo4j/ES。记忆注入和黑话、风格、信念、好感、时间线一起进回复，通道和预算可单独调。适合长期陪聊群 Bot；不是只塞最近几条的轻量摘要。",
-    "5.1.5",
-    "https://github.com/vivy1024/astrbot_plugin_wave_memory",
+    "5.1.5+local.20261030",
+    "https://github.com/bylkuse/astrbot_plugin_wave_memory",
 )
 class WaveMemoryPlugin(BootstrapMixin, StartupMixin, IngressMixin, InjectionMixin, MaintenanceMixin, Star):
     """插件入口。组装与业务逻辑在 app/ 的 mixin 里；AstrBot 钩子必须定义在本模块（按 __module__ 绑定插件）。"""
@@ -133,7 +133,27 @@ class WaveMemoryPlugin(BootstrapMixin, StartupMixin, IngressMixin, InjectionMixi
         """捕获所有消息，异步写入记忆。"""
         await self._handle_message(event)
 
-    @filter.on_decorating_result()
+    @filter.on_llm_response(priority=100000)
+    async def sanitize_llm_response(self, event: AstrMessageEvent, response):
+        """Clean private annotations before renderers or speech converters.
+
+        Args:
+            event: Current message event.
+            response: Completed model response.
+        """
+        from .services.reply_sanitizer import record_impressions, sanitize_chain, strip_impression_marks
+
+        if response is None:
+            return
+        chain = getattr(response, "result_chain", None)
+        if chain is not None and chain.chain:
+            marks = sanitize_chain(chain.chain)
+        else:
+            cleaned, marks = strip_impression_marks(response.completion_text or "")
+            response.completion_text = cleaned
+        await record_impressions(self, event, marks)
+
+    @filter.on_decorating_result(priority=100000)
     async def on_decorating_result(self, event: AstrMessageEvent):
         """在发送消息前提取 <<impression:...>> 标记并更新画像，彻底从消息链中剥离标记。"""
         await self._handle_decorating_result(event)

@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.1.5+local.20261030
+
+- Skip empty image/emoji/audio/video placeholders before database and embedding work; keep actual captions and transcriptions. Remove historical placeholder-only automatic memories and skip generated model-error replies.
+- Remove private impression annotations before response rendering and from streaming chunks, including split, mixed-case, empty and unfinished tags. Preserve the private impression once per response.
+- Add automatic message retention: 7-day noise, 90-day low-value messages, a 30-day recent window, and value-ranked global/per-conversation quotas. Preserve manual/agent memories, evidence and active grants; automatic core messages receive a ranking bonus and count against quotas. Upgrade users should review the new `Eviction_Settings` retention periods.
+- Trim terminal background job history while keeping active runs and each slot's latest generation. Add the missing request and retention indexes to the actual startup migration; bound job claim queries.
+- Fix the batch-delete callback signature and clean dangling tag/status/search rows. Keep impression writes in the caller's transaction and exclude inactive memories from vector backfill.
+- Create the missing episode evidence table during normal startup. Prevent WebUI sockets from surviving an exec restart and close owned sockets on shutdown.
+- Fix the jargon asset status fallback and unresolved type annotations found by the code review.
+- Keep reply regression tests independent of the AstrBot SDK, matching the repository CI environment.
+
 ## v5.1.5（2026-10-28）
 
 ### 改进

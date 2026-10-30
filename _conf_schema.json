@@ -1376,14 +1376,47 @@
     }
   },
   "Eviction_Settings": {
-    "description": "记忆淘汰（outbox 历史清理与冷记忆向量降级）",
-    "hint": "噪声记忆不删除（记忆只增不删），这里只控制写入流水账的保留期与向量降级区间",
+    "description": "记忆与历史自动清理",
+    "hint": "自动裁剪过期噪声和低价值聊天，保护手动记忆、主动记忆及知识证据。新配置默认生效，升级后可在此调整。",
     "type": "object",
     "items": {
       "interval_hours": {
         "description": "淘汰作业检查间隔（小时）",
         "type": "float",
         "default": 6.0
+      },
+      "noise_days": {
+        "description": "噪声及隔离消息保留天数",
+        "type": "float",
+        "default": 7.0
+      },
+      "low_value_days": {
+        "description": "低价值聊天保留天数",
+        "hint": "超过此期限、重要度小于 1.5、召回少于 3 次的自动聊天可清理；最近 7 天被召回的记录继续保留。",
+        "type": "float",
+        "default": 90.0
+      },
+      "recent_days": {
+        "description": "普通聊天最短保留天数",
+        "type": "float",
+        "default": 30.0
+      },
+      "max_memories": {
+        "description": "普通记忆全库配额（条）",
+        "hint": "超过配额时，优先裁剪最短保留期之外的低价值记录。手动记忆、主动记忆及知识证据不计入此配额。自动标为 core 的 Bot 回复和提及消息也受配额约束。",
+        "type": "int",
+        "default": 50000
+      },
+      "max_per_scope": {
+        "description": "每个会话的普通记忆配额（条）",
+        "type": "int",
+        "default": 20000
+      },
+      "job_days": {
+        "description": "已结束后台任务历史保留天数",
+        "hint": "保留每条任务链的最新游标及所有进行中的任务。",
+        "type": "float",
+        "default": 7.0
       }
     }
   }

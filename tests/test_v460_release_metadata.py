@@ -1,3 +1,5 @@
+import ast
+import re
 from pathlib import Path
 
 
@@ -6,8 +8,17 @@ class TestV463ReleaseMetadata:
         metadata = Path("metadata.yaml").read_text(encoding="utf-8")
         main = Path("main.py").read_text(encoding="utf-8")
 
-        assert "version: v5.1.5" in metadata
-        assert '"5.1.5"' in main
+        version = re.search(r"^version: v(\S+)$", metadata, re.MULTILINE).group(1)
+        registration = next(
+            decorator
+            for node in ast.parse(main).body
+            if isinstance(node, ast.ClassDef) and node.name == "WaveMemoryPlugin"
+            for decorator in node.decorator_list
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Name)
+            and decorator.func.id == "register"
+        )
+        assert registration.args[3].value == version
 
     def test_changelog_has_v463_and_v460_release_notes(self):
         changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")

@@ -126,6 +126,10 @@ class OutboxRepository:
             CREATE INDEX IF NOT EXISTS idx_outbox_operation ON domain_outbox(operation_id);
             CREATE INDEX IF NOT EXISTS idx_background_job_runs_ready
                 ON background_job_runs(status, lease_until, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_background_job_runs_request
+                ON background_job_runs(request_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_background_job_runs_retention
+                ON background_job_runs(status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_quality_decisions_outcome_time
                 ON quality_decisions(outcome, decided_at DESC);
             """
@@ -238,7 +242,7 @@ class OutboxRepository:
         if not consumer_names:
             return None
         placeholders = ",".join("?" for _ in consumer_names)
-        rows = connection.execute(
+        cursor = connection.execute(
             f"""
             SELECT o.event_id, o.operation_id, w.write_sequence, o.aggregate_kind,
                    o.aggregate_id, o.aggregate_version, o.event_type, o.payload_version,
@@ -254,11 +258,14 @@ class OutboxRepository:
             ORDER BY w.write_sequence, o.created_at, d.consumer_name
             """,
             (*consumer_names, watermark, now, now),
-        ).fetchall()
-        row = next(
-            (item for item in rows if (str(item[0]), str(item[9])) not in excluded),
-            None,
         )
+        try:
+            row = next(
+                (item for item in cursor if (str(item[0]), str(item[9])) not in excluded),
+                None,
+            )
+        finally:
+            cursor.close()
         if row is None:
             return None
         changed = connection.execute(

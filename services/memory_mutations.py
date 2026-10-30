@@ -265,7 +265,7 @@ class MemoryMutationGateway:
     async def _commit(
         self,
         *,
-        scope: RuntimeScope,
+        scope: RuntimeScope | None,
         command_type: str,
         actor: str,
         event_type: str,
@@ -323,7 +323,7 @@ class MemoryMutationGateway:
                     idempotency_key,
                     request_hash,
                     command_type,
-                    _canonical_json(scope_to_dict(scope)),
+                    _canonical_json(scope_to_dict(scope) if scope else {"kind": "system_maintenance"}),
                     write_sequence,
                     now,
                 ),
@@ -331,8 +331,8 @@ class MemoryMutationGateway:
             records = tuple(mutate(connection, operation_id))
             entities = []
             effects = []
-            scope_payload = scope_to_dict(scope)
             for index, record in enumerate(records):
+                scope_payload = record.get("scope") or scope_to_dict(scope)
                 memory_id = int(record["memory_id"])
                 revision = int(record["revision"])
                 event_id = uuid.uuid5(
@@ -717,13 +717,62 @@ class MemoryMutationGateway:
             actor="webui.memory.delete",
             event_type="memory.deleted",
             request_shape=request_shape,
-            mutate=lambda connection: MemoryRepo.delete_scoped_memories(
+            mutate=lambda connection, _operation_id: MemoryRepo.delete_scoped_memories(
                 connection,
                 scope=scope,
                 expected_revisions={
                     target.memory_id: target.revision for target in normalized
                 },
             ),
+        )
+
+    async def prune_automatic_memories(self, *, policy, limit: int = 100, scan_placeholders: bool = True) -> MemoryMutationResult:
+        """Select and delete retention candidates atomically with outbox events.
+
+        Args:
+            policy: Automatic-memory ages and capacities.
+            limit: Maximum deletions per writer transaction.
+            scan_placeholders: Refresh empty-media IDs at the start of the sweep.
+
+        Returns:
+            Deleted memory identities for diagnostics.
+        """
+        try:
+            from ..domain.scope import SessionRef
+            from ..engine.db.retention_repo import retention_candidates
+        except ImportError:
+            from domain.scope import SessionRef
+            from engine.db.retention_repo import retention_candidates
+
+        now = self._now()
+
+        def mutate(connection, _operation_id):
+            rows = retention_candidates(connection, policy, now=now, limit=limit,
+                                        scan_placeholders=scan_placeholders)
+            groups = {}
+            for memory_id, revision, bot_id, session_id, visibility, group_id in rows:
+                parts = session_id.split(":", 2)
+                if len(parts) != 3 or parts[1] != visibility or parts[2] != group_id:
+                    continue
+                key = (bot_id, session_id, visibility, group_id, parts[0])
+                groups.setdefault(key, {})[memory_id] = revision
+            records = []
+            for (bot_id, session_id, visibility, group_id, platform_id), targets in groups.items():
+                scope = RuntimeScope(
+                    bot_id=bot_id, visibility=visibility,
+                    session=SessionRef(id=session_id, platform_id=platform_id,
+                                       kind=visibility, conversation_id=group_id),
+                )
+                deleted = MemoryRepo.delete_scoped_memories(
+                    connection, scope=scope, expected_revisions=targets, allow_quarantine=True,
+                )
+                records.extend({**record, "scope": scope_to_dict(scope)} for record in deleted)
+            return records
+
+        return await self._commit(
+            scope=None, command_type="memory.retention.delete.v1", actor="memory.retention",
+            event_type="memory.deleted", request_shape={"batch_id": uuid.uuid4().hex, "limit": limit},
+            mutate=mutate,
         )
 
 

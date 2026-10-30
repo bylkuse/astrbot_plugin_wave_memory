@@ -871,6 +871,7 @@ class MaintenanceMixin:
                  AND m.visibility IN ('group', 'private')
                  AND COALESCE(m.bot_id, '')<>''
                  AND COALESCE(m.session_id, '')<>''
+                 AND COALESCE(m.memory_type,'message') NOT IN ('noise','archived','evicted','deleted')
                  AND COALESCE(m.source, '') NOT IN ('noise', 'identity_quarantine')""",
             (int(after_id),),
         )

@@ -33,6 +33,9 @@ _SENDER_INDEX = "CREATE INDEX IF NOT EXISTS idx_memories_sender ON memories(send
 # 按昵称找人（人物解析工具、事后记账）：没有它要按 bot_id 回表扫这个 Bot 的全部行，
 # 线上实测读 690MB；加上后 0 读盘，索引约 11MB。
 _SENDER_NAME_INDEX = "CREATE INDEX IF NOT EXISTS idx_memories_bot_sender_name ON memories(bot_id, sender_name)"
+_RETENTION_INDEX = """CREATE INDEX IF NOT EXISTS idx_memories_retention ON memories(
+    source, memory_type, resolution_state, visibility, bot_id, session_id, group_id,
+    timestamp, last_accessed, importance, access_count, version, sender_id)"""
 
 
 def ensure_memories_v2_schema(cm: ConnectionManager) -> None:
@@ -54,6 +57,7 @@ def ensure_memories_v2_schema(cm: ConnectionManager) -> None:
         tx.execute(_SCOPED_INDEX)
         tx.execute(_SENDER_INDEX)
         tx.execute(_SENDER_NAME_INDEX)
+        tx.execute(_RETENTION_INDEX)
 
 
 __all__ = ["MEMORIES_V2_VERSION", "ensure_memories_v2_schema"]
